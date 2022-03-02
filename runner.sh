@@ -14,16 +14,30 @@ get_raw_translation() {
 }
 
 
-x=$(get_raw_translation $1)
+print_single_usage() {
+	local len=$(echo $1 | jq "length")
+	for ((i = 0; i < $len; i++)); do
+		echo "-------------------------------------------------------------"
+		echo $1 | jq ".[${i}]"
+		echo
+		echo
+		echo
+	done
+}
 
-# echo $x | jq ".$main_translation"
+
+print_translations() {
+	local usage_count=$(echo $1 | jq ".${usage} | length")
+	for ((i = 0; i < $usage_count; i++)); do
+		local filter=".${usage}[${i}][2]"
+		u=$(echo $1 | jq --raw-output "$filter")
+		print_single_usage "$u"
+	done
+}
 
 
-usage_count=$(echo $x | jq ".${usage} | length")
+x=$(get_raw_translation "$1")
 
-for ((i = 0; i < $usage_count; i++))  do
-	echo $i
-	z=".${usage}[${i}]"
-	echo $z
-	echo $x | jq "$z"
-done
+print_translations "$x"
+
+echo $x
