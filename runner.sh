@@ -43,7 +43,7 @@ print_single_usage() {
 print_translations() {
 	local usage_count=$(echo $1 | jq ".${usage} | length")
 	declare -i i
-	for ((i = 0; i < $usage_count + 1; i++)); do
+	for ((i = 0; i < $usage_count; i++)); do
 		local filter=".${usage}[${i}]"
 		u=$(echo $1 | jq --raw-output "$filter")
 		print_single_usage "$u"
