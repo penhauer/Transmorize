@@ -50,9 +50,9 @@ print_translations() {
 	done
 }
 
-
-x=$(get_raw_translation "$1")
-
-print_translations "$x"
-
-# echo $x
+if [ ! -z $1 ]; then
+	x=$(get_raw_translation "$1")
+	print_translations "$x"
+else
+	echo "provide a word"
+fi
