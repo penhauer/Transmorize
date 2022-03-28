@@ -1,147 +1,124 @@
-#!/usr/bin/env python3
+#!./venv/bin/python3
 
 import argparse
-import sys
-import sqlite3
 import csv
+import sys
+
+import sqlalchemy.orm
+
+Base = sqlalchemy.orm.declarative_base()
 
 
-class DAO(object):
+class Word(Base):
+    __tablename__ = "words"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    word = sqlalchemy.Column(sqlalchemy.String, nullable=False)
+    creation_date = sqlalchemy.Column(sqlalchemy.DateTime,
+                                      server_default=sqlalchemy.text("(datetime('now', 'localtime'))"))
+    removed = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
+    meanings = sqlalchemy.orm.relationship(
+        "Meaning", back_populates="word", cascade="all, delete-orphan"
+    )
 
-    enable_foreign_key_query = """
-        pragma foreign_keys = ON;
-    """
+    def __repr__(self):
+        return f"Word(id={self.id}, word={self.word})"
 
-    get_word_query = """
-        select * from words
-        where word = ?;
-    """
 
-    get_word_meanings_query = """
-        select m.creation_date, m.meaning
-        from meanings m
-            inner join words w on m.word_id = w.id
-        where w.word = ?
-    """
+class Meaning(Base):
+    __tablename__ = "meanings"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    meaning = sqlalchemy.Column(sqlalchemy.String, nullable=False)
 
-    word_insertion_query = """
-        insert into words (language, word) values ('en', ?);
-    """
+    word_id = sqlalchemy.Column(sqlalchemy.Integer, sqlalchemy.ForeignKey(Word.__tablename__ + ".id"), nullable=False)
+    word = sqlalchemy.orm.relationship("Word", back_populates="meanings")
 
-    insert_meaning_query = """
-        insert into meanings (meaning, word_id)
-        select ?, w.id
-        from words w
-        where w.word = ?;
-    """
+    creation_date = sqlalchemy.Column(sqlalchemy.DateTime,
+                                      server_default=sqlalchemy.text("(datetime('now', 'localtime'))"))
+    removed = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
 
-    get_last_query = """
-        select w.word, m.meaning, m.creation_date
-        from words w
-            inner join meanings m on w.id = m.word_id
-        order by m.creation_date desc
-        limit ?;
-    """
-
-    remove_word_query = """
-        delete 
-        from words
-        where word = ?;
-    """
-
-    remove_meaning_query = """
-        delete 
-        from meanings
-        where id = ?;
-    """
-
-    def __init__(self):
-        self.connection = sqlite3.connect('test.db')
-        self.cursor = self.connection.cursor()
-        self.enable_foreign_key()
-
-    def enable_foreign_key(self):
-        self.cursor.execute(DAO.enable_foreign_key_query)
-
-    def get_last(self, n: int):
-        self.cursor.execute(DAO.get_last_query, (n, ))
-        return self.cursor.fetchall()
-
-    def get_word(self, word: str):
-        self.cursor.execute(DAO.get_word_query, (word, ))
-        return self.cursor.fetchall()
-    
-    def get_word_meanings(self, word: str):
-        self.cursor.execute(DAO.get_word_meanings_query, (word, ))
-        return self.cursor.fetchall()
-    
-    def insert_word(self, word: str):
-        self.cursor.execute(DAO.word_insertion_query, (word, ))
-        self.connection.commit()
-
-    def insert_meaning(self, word: str, meaning: str):
-        self.cursor.execute(DAO.insert_meaning_query, (meaning, word))
-        self.connection.commit()
-
-    def remove_word(self, word: str):
-        self.cursor.execute(DAO.remove_word_query, (word, ))
-        self.connection.commit()
-
-    def remove_meaning(self, meaning_id: int):
-        self.cursor.execute(DAO.remove_meaning_query, (meaning_id, ))
-        self.connection.commit()
+    def __repr__(self):
+        return f"Meaning(id={self.id}, meaning={self.meaning}), removed={self.removed}"
 
 
 class Color:
-   PURPLE = '\033[95m'
-   CYAN = '\033[96m'
-   DARKCYAN = '\033[36m'
-   BLUE = '\033[94m'
-   GREEN = '\033[92m'
-   YELLOW = '\033[93m'
-   RED = '\033[91m'
-   BOLD = '\033[1m'
-   UNDERLINE = '\033[4m'
-   END = '\033[0m'
+    PURPLE = '\033[95m'
+    CYAN = '\033[96m'
+    DARKCYAN = '\033[36m'
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    END = '\033[0m'
+
 
 def pretty_print_meanings(word, meanings):
     print()
     print(Color.BOLD, word, Color.END)
     for meaning in meanings:
-        print("\t", meaning[1])
+        print("\t", meaning.meaning)
     print()
 
+
+def get_word(session, word):
+    return session.query(Word).filter(Word.word == word).one()
+
+
+def get_last(session, count):
+    return session.query(Meaning) \
+        .join(Word) \
+        .where(sqlalchemy.and_(Meaning.removed == False, Word.removed == False)) \
+        .order_by(Meaning.creation_date.desc()) \
+        .limit(count).all()
+
+
+def search_word(session, word):
+    return session.query(Word) \
+        .filter(sqlalchemy.and_(Word.word.like(f"%{word}%"), Word.removed == False)) \
+        .all()
+
+
+def add_word(session, word):
+    word = Word(word=word, meanings=[])
+    session.add(word)
+    session.commit()
+    return word
+
+
+def add_meaning(session, word, meaning):
+    meaning = Meaning(word=word, meaning=meaning)
+    session.add(meaning)
+    session.commit()
 
 
 class Memorize(object):
 
-    def __init__(self, dao):
+    def __init__(self):
+
+        engine = sqlalchemy.create_engine("sqlite:///test.db", echo=False, future=True)
+        self.session = sqlalchemy.orm.Session(engine)
 
         parser = argparse.ArgumentParser(
             description='Memorize description',
-            usage='''memorize <command> [<args>]
+            usage='''
+memorize <command> [<args>]
 
 command can be one of the following
-   add         Record changes to the repository
-   remove      Download objects and refs from another repository
-   last        sdfasd asdf asdf asdfj
-   search      sdfasdfasd asd fsdf s
-   imp         import words as csv file
+   add         Add a word and meaning
+   remove      Remove meanings of a word or the word itself
+   last        Show last Added words
+   search      Search for similar added words
+   imp         import words from a csv file in google translate format
 ''')
         parser.add_argument('command', help='Subcommand to run')
-
-        # parse_args defaults to [1:] for args, but you need to
-        # exclude the rest of the args too, or validation will fail
 
         args = parser.parse_args(sys.argv[1:2])
         if not hasattr(self, args.command):
             print('Unrecognized command')
             parser.print_help()
             exit(1)
-            
-        # use dispatch pattern to invoke method with same name
 
-        self.dao = dao
         getattr(self, args.command)()
 
     def add(self):
@@ -149,61 +126,65 @@ command can be one of the following
         parser.add_argument('word', help='word to save')
         parser.add_argument('meaning', help='meaning to save')
         args = parser.parse_args(sys.argv[2:])
-        word = self.dao.get_word(args.word)
+
+        word = self.session.query(Word).where(Word.word == args.word).one_or_none()
 
         if word:
-            print(f"There is already word {args.word} saved with following meanings")
-            meanings = self.dao.get_word_meanings(args.word)
-            pretty_print_meanings(args.word, meanings)
-            prompt = input(f"do you still want to save {args.word} ~ {args.meaning} [yes/no]")
-            if prompt not in ["yes", "y"]:
-                print("save canceled")
-                return
+            if not word.removed:
+                print(f"There is already word {args.word} saved with following meanings")
+                meanings = word.meanings
+                pretty_print_meanings(args.word, meanings)
+                prompt = input(f"do you still want to save {args.word} ~ {args.meaning} [yes/no]")
+                if prompt not in ["yes", "y"]:
+                    print("save canceled")
+                    return
+            else:
+                word.remove = False
         else:
-            self.dao.insert_word(args.word)
+            add_word(self.session, word)
         print(f"saving {args.word} ~ {args.meaning}")
-        self.dao.insert_meaning(args.word, args.meaning)
+        add_meaning(self.session, word, args.meaning)
 
     def last(self):
         parser = argparse.ArgumentParser(prog='memorize last', description='')
         parser.add_argument('count', type=int, nargs='?', default=10, help='number of words to show')
         args = parser.parse_args(sys.argv[2:])
-
-        last_list = self.dao.get_last(args.count)
+        last_list = get_last(self.session, args.count)
         for item in last_list:
-            print(item)
+            print(item.word.word, item.meaning)
 
     def remove(self):
         parser = argparse.ArgumentParser(prog='memorize remove', description='')
         parser.add_argument('word', help='word to remove')
         args = parser.parse_args(sys.argv[2:])
 
-        meanings = self.dao.get_word_meanings(args.word)
-        for i, meaning in enumerate(meanings):
+        word = get_word(self.session, args.word)
+
+        for i, meaning in enumerate(word.meanings):
             print(i + 1, "->", meaning)
 
         index = input("enter index of meaning to remove. use 0 to remove all\n")
-        if not index.isnumeric(): 
+        if not index.isnumeric():
             print("please enter a number")
             return
         index = int(index)
         if index == 0:
-            self.dao.remove_word(args.word)
+            word.removed = True
         else:
             index -= 1
-            self.dao.remove_meaning(meanings[index][0])
+            meaning = word.meanings[index]
+            print(meaning)
+            meaning.removed = True
+
+        self.session.commit()
 
     def search(self):
         parser = argparse.ArgumentParser(prog='memorize search', description='')
         parser.add_argument('word', help='word to remove')
         args = parser.parse_args(sys.argv[2:])
-        meanings = self.dao.get_word_meanings(args.word)
-
-        if meanings:
-            pretty_print_meanings(args.word, meanings)
-        else:
-            print(f"no record of {args.word} found")
-
+        words = search_word(self.session, args.word)
+        for word in words:
+            pretty_print_meanings(word.word, word.meanings)
 
     def imp(self):
         parser = argparse.ArgumentParser(prog='memorize import', description='')
@@ -213,12 +194,14 @@ command can be one of the following
             csv_reader = csv.reader(file)
             for line in csv_reader:
                 print(line)
-                word = self.dao.get_word(line[2])
+                word = get_word(self.session, line[2])
                 if not word:
-                    self.dao.insert_word(line[2])
-                self.dao.insert_meaning(line[2], line[3])
+                    add_word(self.session, line[2])
+                if word.removed:
+                    continue
+                if not line[3] in word.meanings:
+                    add_meaning(self.session, word, line[3])
 
 
 if __name__ == '__main__':
-    Memorize(DAO())
-
+    Memorize()
