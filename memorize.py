@@ -15,7 +15,6 @@ class Word(Base):
     word = sqlalchemy.Column(sqlalchemy.String, nullable=False)
     creation_date = sqlalchemy.Column(sqlalchemy.DateTime,
                                       server_default=sqlalchemy.text("(datetime('now', 'localtime'))"))
-    removed = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
     meanings = sqlalchemy.orm.relationship(
         "Meaning", back_populates="word", cascade="all, delete-orphan"
     )
@@ -34,10 +33,14 @@ class Meaning(Base):
 
     creation_date = sqlalchemy.Column(sqlalchemy.DateTime,
                                       server_default=sqlalchemy.text("(datetime('now', 'localtime'))"))
-    removed = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
 
     def __repr__(self):
-        return f"Meaning(id={self.id}, meaning={self.meaning}), removed={self.removed}"
+        return f"Meaning(id={self.id}, meaning={self.meaning})"
+
+
+engine = sqlalchemy.create_engine("sqlite:///test.db", echo=False, future=True)
+session = sqlalchemy.orm.Session(engine)
+
 
 
 class Color:
@@ -61,44 +64,94 @@ def pretty_print_meanings(word, meanings):
     print()
 
 
-def get_word(session, word):
-    return session.query(Word).filter(Word.word == word).one()
+def get_word(word):
+    return session.query(Word).filter(Word.word == word).first()
 
 
-def get_last(session, count):
+def get_last(count):
     return session.query(Meaning) \
         .join(Word) \
-        .where(sqlalchemy.and_(Meaning.removed == False, Word.removed == False)) \
         .order_by(Meaning.creation_date.desc()) \
         .limit(count).all()
 
 
-def search_word(session, word):
+def search_word(word):
     return session.query(Word) \
-        .filter(sqlalchemy.and_(Word.word.like(f"%{word}%"), Word.removed == False)) \
+        .filter(sqlalchemy.and_(Word.word.like(f"%{word}%"))) \
         .all()
 
 
-def add_word(session, word):
-    word = Word(word=word, meanings=[])
+def add_word(w):
+    word = Word(word=w, meanings=[])
     session.add(word)
     session.commit()
     return word
 
 
-def add_meaning(session, word, meaning):
+def add_meaning(word, meaning):
     meaning = Meaning(word=word, meaning=meaning)
     session.add(meaning)
     session.commit()
 
 
+def remove_word(word):
+    session.delete(word)
+    session.commit()
+
+
+def remove_meaning(meaning):
+    session.delete(meaning)
+    session.commit()
+
+
+def remove():
+    def parse_arguments():
+        parser = argparse.ArgumentParser(prog='memorize remove', description='')
+        parser.add_argument('word', help='word to remove')
+        args = parser.parse_args(sys.argv[2:])
+        return args.word
+
+    def print_word_meanings(word):
+        for i, meaning in enumerate(word.meanings):
+            print(i + 1, "->", meaning)
+
+    def get_index_to_remove():
+        index = input("enter index of meaning to remove. use 0 to remove all\n")
+        if not index.isnumeric():
+            print("please enter a number")
+            return
+        index = int(index)
+        return index
+
+    def remove_meaning_or_word(word, index):
+        if index == 0:
+            print("removing whole word")
+            remove_word(word)
+        else:
+            index -= 1
+            meaning = word.meanings[index]
+
+            if len(word.meanings) == 1:
+                remove_word(word)
+                print("removed the word")
+            else:
+                remove_meaning(meaning)
+                print(f"removed meaning {meaning}")
+
+
+    w = parse_arguments()
+    word = get_word(w)
+    if not word:
+        print(f"no record of word {w} found")
+        return
+    print_word_meanings(word)
+    index = get_index_to_remove()
+    remove_meaning_or_word(word, index)
+
+
 class Memorize(object):
 
     def __init__(self):
-
-        engine = sqlalchemy.create_engine("sqlite:///test.db", echo=False, future=True)
-        self.session = sqlalchemy.orm.Session(engine)
-
         parser = argparse.ArgumentParser(
             description='Memorize description',
             usage='''
@@ -127,62 +180,37 @@ command can be one of the following
         parser.add_argument('meaning', help='meaning to save')
         args = parser.parse_args(sys.argv[2:])
 
-        word = self.session.query(Word).where(Word.word == args.word).one_or_none()
+        word = session.query(Word).where(Word.word == args.word).one_or_none()
 
         if word:
-            if not word.removed:
-                print(f"There is already word {args.word} saved with following meanings")
-                meanings = word.meanings
-                pretty_print_meanings(args.word, meanings)
-                prompt = input(f"do you still want to save {args.word} ~ {args.meaning} [yes/no]")
-                if prompt not in ["yes", "y"]:
-                    print("save canceled")
-                    return
-            else:
-                word.remove = False
+            print(f"There is already word {args.word} saved with following meanings")
+            meanings = word.meanings
+            pretty_print_meanings(args.word, meanings)
+            prompt = input(f"do you still want to save {args.word} ~ {args.meaning} [yes/no]")
+            if prompt not in ["yes", "y"]:
+                print("save canceled")
+                return
         else:
-            add_word(self.session, word)
+            word = add_word(args.word)
         print(f"saving {args.word} ~ {args.meaning}")
-        add_meaning(self.session, word, args.meaning)
+        add_meaning(word, args.meaning)
 
     def last(self):
         parser = argparse.ArgumentParser(prog='memorize last', description='')
         parser.add_argument('count', type=int, nargs='?', default=10, help='number of words to show')
         args = parser.parse_args(sys.argv[2:])
-        last_list = get_last(self.session, args.count)
+        last_list = get_last(args.count)
         for item in last_list:
-            print(item.word.word, item.meaning)
+            print(item.word.word, "\t\t", item.meaning)
 
     def remove(self):
-        parser = argparse.ArgumentParser(prog='memorize remove', description='')
-        parser.add_argument('word', help='word to remove')
-        args = parser.parse_args(sys.argv[2:])
-
-        word = get_word(self.session, args.word)
-
-        for i, meaning in enumerate(word.meanings):
-            print(i + 1, "->", meaning)
-
-        index = input("enter index of meaning to remove. use 0 to remove all\n")
-        if not index.isnumeric():
-            print("please enter a number")
-            return
-        index = int(index)
-        if index == 0:
-            word.removed = True
-        else:
-            index -= 1
-            meaning = word.meanings[index]
-            print(meaning)
-            meaning.removed = True
-
-        self.session.commit()
+        remove()
 
     def search(self):
         parser = argparse.ArgumentParser(prog='memorize search', description='')
         parser.add_argument('word', help='word to remove')
         args = parser.parse_args(sys.argv[2:])
-        words = search_word(self.session, args.word)
+        words = search_word(args.word)
         for word in words:
             pretty_print_meanings(word.word, word.meanings)
 
@@ -194,13 +222,11 @@ command can be one of the following
             csv_reader = csv.reader(file)
             for line in csv_reader:
                 print(line)
-                word = get_word(self.session, line[2])
+                word = get_word(line[2])
                 if not word:
-                    add_word(self.session, line[2])
-                if word.removed:
-                    continue
+                    add_word(line[2])
                 if not line[3] in word.meanings:
-                    add_meaning(self.session, word, line[3])
+                    add_meaning(word, line[3])
 
 
 if __name__ == '__main__':
