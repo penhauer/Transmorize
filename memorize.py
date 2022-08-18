@@ -37,8 +37,8 @@ class Meaning(Base):
     def __repr__(self):
         return f"Meaning(id={self.id}, meaning={self.meaning})"
 
-
-engine = sqlalchemy.create_engine("sqlite:///test.db", echo=False, future=True)
+database_name = "dict.db"
+engine = sqlalchemy.create_engine(f"sqlite:///{database_name}", echo=False, future=True)
 session = sqlalchemy.orm.Session(engine)
 
 
@@ -227,6 +227,10 @@ command can be one of the following
                     add_word(line[2])
                 if not line[3] in word.meanings:
                     add_meaning(word, line[3])
+
+    def init(self):
+        print("initializing")
+        pass
 
 
 if __name__ == '__main__':
