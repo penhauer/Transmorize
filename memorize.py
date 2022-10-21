@@ -1,9 +1,7 @@
-#!./venv/bin/python3
-
 import argparse
 import csv
 import sys
-
+import os
 import sqlalchemy.orm
 
 Base = sqlalchemy.orm.declarative_base()
@@ -37,8 +35,11 @@ class Meaning(Base):
     def __repr__(self):
         return f"Meaning(id={self.id}, meaning={self.meaning})"
 
+
+file_dir=os.path.dirname(os.path.abspath(__file__))
 database_name = "dict.db"
-engine = sqlalchemy.create_engine(f"sqlite:///{database_name}", echo=False, future=True)
+database_path = os.path.join(file_dir, database_name)
+engine = sqlalchemy.create_engine(f"sqlite:///{database_path}", echo=False, future=False)
 session = sqlalchemy.orm.Session(engine)
 
 
@@ -76,9 +77,15 @@ def get_last(count):
 
 
 def search_word(word):
-    return session.query(Word) \
+    meanings = session.query(Meaning) \
+        .filter(sqlalchemy.and_(Meaning.meaning.like(f"%{word}%"))) \
+        .all()
+
+    meanings_words = [x.word for x in meanings]
+    words = session.query(Word) \
         .filter(sqlalchemy.and_(Word.word.like(f"%{word}%"))) \
         .all()
+    return meanings_words + words
 
 
 def add_word(w):
